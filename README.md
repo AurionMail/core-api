@@ -1,0 +1,1 @@
+psql -h localhost -U aurionuser -d auriondb -f migrations/init.sql
