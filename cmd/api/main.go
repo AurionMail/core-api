@@ -77,6 +77,12 @@ func main() {
 		r.Post("/api/bridge/secret", bridgeHandler.PushSecret)
 	})
 
+	r.Group(func(r chi.Router) {
+		r.Use(middleware.InternalMiddleware(cfg.InternalSecret))
+
+		r.Post("/api/internal/bridge/secret", bridgeHandler.InternalPushSecret)
+	})
+
 	// 4. Start server
 	addr := fmt.Sprintf(":%s", cfg.Port)
 	log.Printf("🚀 aurion-api server started on http://localhost%s (%s)", addr, cfg.Env)

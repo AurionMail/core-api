@@ -22,6 +22,7 @@ func NewBridgeHandler(b *bridge.MemoryBridge) *BridgeHandler {
 type PushSecretRequest struct {
 	EncryptedData string `json:"encryptedData"`
 	TTLSeconds    int    `json:"ttlSeconds,omitempty"` // Default: 300s (5 min)
+	ID            string `json:"id,omitempty"`         // Optional custom ID (used by internal route)
 }
 
 type PushSecretResponse struct {
@@ -29,8 +30,8 @@ type PushSecretResponse struct {
 	ExpiresAt time.Time `json:"expiresAt"`
 }
 
-// POST /api/bridge/secret (Public) - Stores the secret in RAM
-func (h *BridgeHandler) PushSecret(w http.ResponseWriter, r *http.Request) {
+// Fonction interne partagée pour gérer la logique d'enregistrement
+func (h *BridgeHandler) handlePushSecret(w http.ResponseWriter, r *http.Request, allowCustomID bool) {
 	var req PushSecretRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.EncryptedData) == "" {
 		http.Error(w, `{"error":"Invalid or missing encrypted payload"}`, http.StatusBadRequest)
@@ -42,7 +43,11 @@ func (h *BridgeHandler) PushSecret(w http.ResponseWriter, r *http.Request) {
 		ttl = time.Duration(req.TTLSeconds) * time.Second
 	}
 
-	blob, err := h.Bridge.Store(req.EncryptedData, ttl)
+	if !allowCustomID {
+		req.ID = "" // Ignore any provided ID for public route
+	}
+
+	blob, err := h.Bridge.Store(req.EncryptedData, ttl, req.ID)
 	if err != nil {
 		http.Error(w, `{"error":"Error storing secret in memory"}`, http.StatusInternalServerError)
 		return
@@ -54,6 +59,16 @@ func (h *BridgeHandler) PushSecret(w http.ResponseWriter, r *http.Request) {
 		ID:        blob.ID,
 		ExpiresAt: blob.ExpiresAt,
 	})
+}
+
+// POST /api/bridge/secret (Public) - Stores the secret in RAM
+func (h *BridgeHandler) PushSecret(w http.ResponseWriter, r *http.Request) {
+	h.handlePushSecret(w, r, false)
+}
+
+// POST /api/internal/bridge/secret (Internal) - Stores the secret in RAM
+func (h *BridgeHandler) InternalPushSecret(w http.ResponseWriter, r *http.Request) {
+	h.handlePushSecret(w, r, true)
 }
 
 // GET /api/bridge/secret/{id} (Public) - Consumes the secret from RAM (Burn after reading)

@@ -17,6 +17,7 @@ type Config struct {
 	LDAPBaseDN     string
 	LDAPUserAttr   string
 	AllowedOrigins []string
+	InternalSecret string
 }
 
 func Load() (*Config, error) {
@@ -49,6 +50,7 @@ func Load() (*Config, error) {
 		LDAPBaseDN:     getEnv("LDAP_BASE_DN", "ou=users,dc=aurion,dc=io"),
 		LDAPUserAttr:   getEnv("LDAP_USER_ATTR", "mail"),
 		AllowedOrigins: origins,
+		InternalSecret: getEnv("INTERNAL_SECRET", "internal-secret-key-change-in-production"),
 	}, nil
 }
 

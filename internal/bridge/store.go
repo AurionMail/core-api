@@ -34,10 +34,17 @@ func GenerateID() (string, error) {
 }
 
 // Store places the encrypted blob in RAM with a time-to-live (TTL)
-func (b *MemoryBridge) Store(encryptedData string, ttl time.Duration) (*SecretBlob, error) {
-	id, err := GenerateID()
-	if err != nil {
-		return nil, fmt.Errorf("error generating ID: %w", err)
+func (b *MemoryBridge) Store(encryptedData string, ttl time.Duration, customID ...string) (*SecretBlob, error) {
+	var id string
+	var err error
+
+	if len(customID) > 0 && customID[0] != "" {
+		id = customID[0]
+	} else {
+		id, err = GenerateID()
+		if err != nil {
+			return nil, fmt.Errorf("error generating ID: %w", err)
+		}
 	}
 
 	expiresAt := time.Now().UTC().Add(ttl)
