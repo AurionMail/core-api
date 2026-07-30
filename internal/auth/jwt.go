@@ -13,13 +13,13 @@ type Claims struct {
 	jwt.RegisteredClaims
 }
 
-// GenerateToken creates a JWT valid for 24 hours
+// GenerateToken creates a JWT valid for 10 hours
 func GenerateToken(userID, email, secret string) (string, error) {
 	claims := &Claims{
 		UserID: userID,
 		Email:  email,
 		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(24 * time.Hour)),
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(10 * time.Hour)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
 		},
 	}
