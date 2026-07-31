@@ -1,13 +1,13 @@
 package handlers
 
 import (
-	"encoding/json"
-	"net/http"
-
 	"aurion-api/internal/auth"
 	"aurion-api/internal/config"
 	"aurion-api/internal/db"
 	"aurion-api/internal/models"
+	"encoding/json"
+	"log"
+	"net/http"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -46,6 +46,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	// 1. Direct authentication against the LDAP server
 	email, err := h.LDAP.Authenticate(req.Email, req.Password)
 	if err != nil {
+		log.Printf("Error when authenticating user %s (%s)", req.Email, err)
 		http.Error(w, `{"error":"Invalid credentials"}`, http.StatusUnauthorized)
 		return
 	}
@@ -65,6 +66,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err != nil {
+		log.Printf("Error when synchronizing user %s (%s)", req.Email, err)
 		http.Error(w, `{"error":"Error synchronizing account"}`, http.StatusInternalServerError)
 		return
 	}
@@ -72,6 +74,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	// 3. JWT token generation
 	token, err := auth.GenerateToken(user.ID, user.Email, h.Cfg.JWTSecret)
 	if err != nil {
+		log.Printf("Error when generating token for user %s (%s)", req.Email, err)
 		http.Error(w, `{"error":"Error generating token"}`, http.StatusInternalServerError)
 		return
 	}
