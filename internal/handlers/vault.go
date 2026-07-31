@@ -107,22 +107,24 @@ func (h *VaultHandler) SyncVault(w http.ResponseWriter, r *http.Request) {
 	defer tx.Rollback(r.Context())
 
 	// 1. Save/Update PGP keys vault
-	keysJSON, err := json.Marshal(payload.Keys)
-	if err != nil {
-		http.Error(w, `{"error":"Key serialization error"}`, http.StatusInternalServerError)
-		return
-	}
+	if len(payload.Keys) > 0 {
+		keysJSON, err := json.Marshal(payload.Keys)
+		if err != nil {
+			http.Error(w, `{"error":"Key serialization error"}`, http.StatusInternalServerError)
+			return
+		}
 
-	queryVault := `
-        INSERT INTO user_vault (user_id, format, version, keys, updated_at)
-        VALUES ($1, $2, $3, $4, NOW())
-        ON CONFLICT (user_id) 
-        DO UPDATE SET format = EXCLUDED.format, version = EXCLUDED.version, keys = EXCLUDED.keys, updated_at = NOW()`
+		queryVault := `
+			INSERT INTO user_vault (user_id, format, version, keys, updated_at)
+			VALUES ($1, $2, $3, $4, NOW())
+			ON CONFLICT (user_id) 
+			DO UPDATE SET format = EXCLUDED.format, version = EXCLUDED.version, keys = EXCLUDED.keys, updated_at = NOW()`
 
-	_, err = tx.Exec(r.Context(), queryVault, userID, payload.Format, payload.Version, keysJSON)
-	if err != nil {
-		http.Error(w, `{"error":"Error saving vault"}`, http.StatusInternalServerError)
-		return
+		_, err = tx.Exec(r.Context(), queryVault, userID, payload.Format, payload.Version, keysJSON)
+		if err != nil {
+			http.Error(w, `{"error":"Error saving vault"}`, http.StatusInternalServerError)
+			return
+		}
 	}
 
 	// 2. Batching for message cache (PGX network optimization)
