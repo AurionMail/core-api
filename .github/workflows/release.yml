@@ -27,11 +27,14 @@ jobs:
       - name: Build application
         run: go build -ldflags="-w -s" -o aurion-api ./cmd/api
 
-      - name: Upload Binary to Release
+      - name: Create Zip Archive
+        run: zip -r aurion-api.zip aurion-api migrations
+
+      - name: Upload Zip to Release
         uses: svenstaro/upload-release-action@v2
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: aurion-api
-          asset_name: aurion-api
+          file: aurion-api.zip
+          asset_name: aurion-api.zip
           tag: ${{ github.ref }}
           overwrite: true
