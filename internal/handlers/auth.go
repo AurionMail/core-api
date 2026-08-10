@@ -4,6 +4,7 @@ import (
 	"aurion-api/internal/auth"
 	"aurion-api/internal/config"
 	"aurion-api/internal/db"
+	"aurion-api/internal/middleware"
 	"aurion-api/internal/models"
 	"encoding/json"
 	"log"
@@ -84,4 +85,21 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		Token: token,
 		User:  user,
 	})
+}
+
+func (h *AuthHandler) Me(w http.ResponseWriter, r *http.Request) {
+	userID := middleware.GetUserIDFromContext(r.Context())
+
+	var user models.User
+	query := `SELECT id, email, created_at FROM users WHERE id = $1`
+	err := h.DB.Pool.QueryRow(r.Context(), query, userID).Scan(&user.ID, &user.Email, &user.CreatedAt)
+
+	if err != nil {
+		log.Printf("Error when retrieving user %s (%s)", userID, err)
+		http.Error(w, `{"error":"Error retrieving user"}`, http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(user)
 }
