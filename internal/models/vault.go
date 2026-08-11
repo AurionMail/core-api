@@ -46,6 +46,7 @@ type PGPKey struct {
 	Recoverable         bool            `json:"recoverable,omitempty"`
 	AESSalt             string          `json:"aesSalt,omitempty"`
 	Argon2Params        *Argon2Params   `json:"argon2Params,omitempty"`
+	ServerSide          bool            `json:"serverSide,omitempty"`
 }
 
 type KeyCapabilities struct {
