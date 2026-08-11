@@ -103,3 +103,22 @@ func (h *AuthHandler) Me(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(user)
 }
+
+func (h *AuthHandler) LogoutAll(w http.ResponseWriter, r *http.Request) {
+	userID := middleware.GetUserIDFromContext(r.Context())
+
+	// Increment the token version in the database to invalidate existing tokens
+	updateQuery := `UPDATE users SET token_version = token_version + 1 WHERE id = $1`
+	_, err := h.DB.Pool.Exec(r.Context(), updateQuery, userID)
+	if err != nil {
+		log.Printf("Error when logging out user %s (%s)", userID, err)
+		http.Error(w, `{"error":"Error logging out"}`, http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{
+		"message": "Logged out successfully",
+	})
+}
