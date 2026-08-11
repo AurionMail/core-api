@@ -8,16 +8,18 @@ import (
 )
 
 type Claims struct {
-	UserID string `json:"userId"`
-	Email  string `json:"email"`
+	UserID       string `json:"userId"`
+	Email        string `json:"email"`
+	TokenVersion int    `json:"tokenVersion"`
 	jwt.RegisteredClaims
 }
 
-// GenerateToken creates a JWT valid for 10 hours
-func GenerateToken(userID, email, secret string) (string, error) {
+// GenerateToken creates a JWT valid for 10 hours including the token version
+func GenerateToken(userID, email string, tokenVersion int, secret string) (string, error) {
 	claims := &Claims{
-		UserID: userID,
-		Email:  email,
+		UserID:       userID,
+		Email:        email,
+		TokenVersion: tokenVersion,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(10 * time.Hour)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
@@ -28,7 +30,7 @@ func GenerateToken(userID, email, secret string) (string, error) {
 	return token.SignedString([]byte(secret))
 }
 
-// ValidateToken verifies the validity of the JWT token
+// ValidateToken verifies the validity of the JWT token structurally
 func ValidateToken(tokenString, secret string) (*Claims, error) {
 	token, err := jwt.ParseWithClaims(tokenString, &Claims{}, func(token *jwt.Token) (interface{}, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {

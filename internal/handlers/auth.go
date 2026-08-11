@@ -73,7 +73,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 3. JWT token generation
-	token, err := auth.GenerateToken(user.ID, user.Email, h.Cfg.JWTSecret)
+	token, err := auth.GenerateToken(user.ID, user.Email, user.TokenVersion, h.Cfg.JWTSecret)
 	if err != nil {
 		log.Printf("Error when generating token for user %s (%s)", req.Email, err)
 		http.Error(w, `{"error":"Error generating token"}`, http.StatusInternalServerError)

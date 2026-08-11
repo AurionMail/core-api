@@ -1,18 +1,20 @@
 package middleware
 
 import (
+	"aurion-api/internal/auth"
+	"aurion-api/internal/db"
 	"context"
+	"database/sql"
+	"errors"
 	"net/http"
 	"strings"
-
-	"aurion-api/internal/auth"
 )
 
 type contextKey string
 
 const UserIDKey contextKey = "userID"
 
-func AuthMiddleware(jwtSecret string) func(http.Handler) http.Handler {
+func AuthMiddleware(database *db.DB, jwtSecret string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			authHeader := r.Header.Get("Authorization")
@@ -33,6 +35,11 @@ func AuthMiddleware(jwtSecret string) func(http.Handler) http.Handler {
 				http.Error(w, `{"error":"Invalid or expired token"}`, http.StatusUnauthorized)
 				return
 			}
+			currentVersion, err := CheckUserVersion(database, r.Context(), claims.UserID)
+			if err != nil || claims.TokenVersion < currentVersion {
+				http.Error(w, `{"error":"Token has been revoked"}`, http.StatusUnauthorized)
+				return
+			}
 
 			// Inject user ID into request context
 			ctx := context.WithValue(r.Context(), UserIDKey, claims.UserID)
@@ -47,4 +54,19 @@ func GetUserIDFromContext(ctx context.Context) string {
 		return val
 	}
 	return ""
+}
+
+func CheckUserVersion(database *db.DB, ctx context.Context, userID string) (int, error) {
+	var tokenVersion int
+	query := `SELECT token_version FROM users WHERE id = $1`
+
+	err := database.Pool.QueryRow(ctx, query, userID).Scan(&tokenVersion)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return 0, errors.New("user not found")
+		}
+		return 0, err
+	}
+
+	return tokenVersion, nil
 }

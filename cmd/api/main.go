@@ -70,7 +70,7 @@ func main() {
 
 	// Protected routes
 	r.Group(func(r chi.Router) {
-		r.Use(middleware.AuthMiddleware(cfg.JWTSecret))
+		r.Use(middleware.AuthMiddleware(database, cfg.JWTSecret))
 		r.Get("/api/auth/me", authHandler.Me)
 		r.Get("/api/vault", vaultHandler.GetVault)
 		r.Post("/api/vault", vaultHandler.SyncVault)

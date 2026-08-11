@@ -8,6 +8,7 @@ type User struct {
 	PasswordHash string    `json:"-"`
 	CreatedAt    time.Time `json:"createdAt"`
 	UpdatedAt    time.Time `json:"updatedAt"`
+	TokenVersion int       `json:"tokenVersion"`
 }
 
 type LoginRequest struct {
