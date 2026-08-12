@@ -160,3 +160,70 @@ func (h *VaultHandler) SyncVault(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(`{"status":"synced"}`))
 }
+
+type DeleteCacheRequest struct {
+	MessageIDs []string `json:"message_ids"`
+}
+
+// DELETE /api/vault/cache/messages
+func (h *VaultHandler) DeleteCachedMessages(w http.ResponseWriter, r *http.Request) {
+	userID := middleware.GetUserIDFromContext(r.Context())
+	if userID == "" {
+		http.Error(w, `{"error":"Unidentified user"}`, http.StatusUnauthorized)
+		return
+	}
+
+	var req DeleteCacheRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, `{"error":"Invalid JSON format"}`, http.StatusBadRequest)
+		return
+	}
+
+	if len(req.MessageIDs) == 0 {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"status":"deleted","deleted":0}`))
+		return
+	}
+
+	query := `
+        DELETE FROM user_message_cache 
+        WHERE user_id = $1 AND message_id = ANY($2)`
+
+	tag, err := h.DB.Pool.Exec(r.Context(), query, userID, req.MessageIDs)
+	if err != nil {
+		http.Error(w, `{"error":"Error deleting cached messages"}`, http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]any{
+		"status":  "deleted",
+		"deleted": tag.RowsAffected(),
+	})
+}
+
+// DELETE /api/vault/cache
+func (h *VaultHandler) ClearMessageCache(w http.ResponseWriter, r *http.Request) {
+	userID := middleware.GetUserIDFromContext(r.Context())
+	if userID == "" {
+		http.Error(w, `{"error":"Unidentified user"}`, http.StatusUnauthorized)
+		return
+	}
+
+	query := `DELETE FROM user_message_cache WHERE user_id = $1`
+
+	tag, err := h.DB.Pool.Exec(r.Context(), query, userID)
+	if err != nil {
+		http.Error(w, `{"error":"Error clearing message cache"}`, http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]any{
+		"status":  "cleared",
+		"deleted": tag.RowsAffected(),
+	})
+}

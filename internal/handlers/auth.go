@@ -122,3 +122,39 @@ func (h *AuthHandler) LogoutAll(w http.ResponseWriter, r *http.Request) {
 		"message": "Logged out successfully",
 	})
 }
+
+func (h *AuthHandler) LogoutOthers(w http.ResponseWriter, r *http.Request) {
+	userID := middleware.GetUserIDFromContext(r.Context())
+
+	var user models.User
+	updateQuery := `
+        UPDATE users 
+        SET token_version = token_version + 1 
+        WHERE id = $1 
+        RETURNING id, email, token_version, created_at`
+
+	err := h.DB.Pool.QueryRow(r.Context(), updateQuery, userID).Scan(
+		&user.ID,
+		&user.Email,
+		&user.TokenVersion,
+		&user.CreatedAt,
+	)
+	if err != nil {
+		log.Printf("Error when invalidating other sessions for user %s (%s)", userID, err)
+		http.Error(w, `{"error":"Error logging out other sessions"}`, http.StatusInternalServerError)
+		return
+	}
+
+	token, err := auth.GenerateToken(user.ID, user.Email, user.TokenVersion, h.Cfg.JWTSecret)
+	if err != nil {
+		log.Printf("Error when generating token for user %s (%s)", user.Email, err)
+		http.Error(w, `{"error":"Error generating token"}`, http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(LoginResponse{
+		Token: token,
+		User:  user,
+	})
+}

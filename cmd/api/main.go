@@ -72,9 +72,12 @@ func main() {
 	r.Group(func(r chi.Router) {
 		r.Use(middleware.AuthMiddleware(database, cfg.JWTSecret))
 		r.Get("/api/auth/me", authHandler.Me)
+		r.Post("/api/auth/logout-others", authHandler.LogoutOthers)
 		r.Get("/api/auth/logout", authHandler.LogoutAll)
 		r.Get("/api/vault", vaultHandler.GetVault)
 		r.Post("/api/vault", vaultHandler.SyncVault)
+		r.Delete("/api/vault/cache", vaultHandler.ClearMessageCache)
+		r.Delete("/api/vault/cache/messages", vaultHandler.DeleteCachedMessages)
 		r.Post("/api/bridge/secret", bridgeHandler.PushSecret)
 	})
 
