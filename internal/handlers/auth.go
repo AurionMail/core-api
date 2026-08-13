@@ -158,3 +158,40 @@ func (h *AuthHandler) LogoutOthers(w http.ResponseWriter, r *http.Request) {
 		User:  user,
 	})
 }
+
+type ChangePasswordRequest struct {
+	CurrentPassword string `json:"current_password"`
+	NewPassword     string `json:"new_password"`
+}
+
+func (h *AuthHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
+	var req ChangePasswordRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, `{"error":"Invalid JSON format"}`, http.StatusBadRequest)
+		return
+	}
+
+	userID := middleware.GetUserIDFromContext(r.Context())
+
+	var user models.User
+	query := `SELECT id, email FROM users WHERE id = $1`
+	err := h.DB.Pool.QueryRow(r.Context(), query, userID).Scan(&user.ID, &user.Email)
+	if err != nil {
+		log.Printf("Error retrieving user for password change %s (%s)", userID, err)
+		http.Error(w, `{"error":"User not found"}`, http.StatusNotFound)
+		return
+	}
+
+	err = h.LDAP.ChangePassword(user.Email, req.CurrentPassword, req.NewPassword)
+	if err != nil {
+		log.Printf("Error changing LDAP password for user %s (%s)", user.Email, err)
+		http.Error(w, `{"error":"Invalid credentials or password policy failed"}`, http.StatusUnauthorized)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{
+		"message": "Password updated successfully.",
+	})
+}

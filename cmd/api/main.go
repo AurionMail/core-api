@@ -72,6 +72,7 @@ func main() {
 	r.Group(func(r chi.Router) {
 		r.Use(middleware.AuthMiddleware(database, cfg.JWTSecret))
 		r.Get("/api/auth/me", authHandler.Me)
+		r.Post("/api/auth/change-password", authHandler.ChangePassword)
 		r.Post("/api/auth/logout-others", authHandler.LogoutOthers)
 		r.Get("/api/auth/logout", authHandler.LogoutAll)
 		r.Get("/api/vault", vaultHandler.GetVault)
