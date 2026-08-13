@@ -54,16 +54,16 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 
 	// 2. Synchronization / Retrieval in the local database (to retain the user_id UUID)
 	var user models.User
-	query := `SELECT id, email, created_at FROM users WHERE email = $1`
-	err = h.DB.Pool.QueryRow(r.Context(), query, email).Scan(&user.ID, &user.Email, &user.CreatedAt)
+	query := `SELECT id, email, token_version, created_at FROM users WHERE email = $1`
+	err = h.DB.Pool.QueryRow(r.Context(), query, email).Scan(&user.ID, &user.Email, &user.TokenVersion, &user.CreatedAt)
 
 	if err == pgx.ErrNoRows {
 		// Auto-provisioning: valid LDAP user is added to the local DB
 		insertQuery := `
             INSERT INTO users (email) 
             VALUES ($1) 
-            RETURNING id, email, created_at`
-		err = h.DB.Pool.QueryRow(r.Context(), insertQuery, email).Scan(&user.ID, &user.Email, &user.CreatedAt)
+            RETURNING id, email, token_version, created_at`
+		err = h.DB.Pool.QueryRow(r.Context(), insertQuery, email).Scan(&user.ID, &user.Email, &user.TokenVersion, &user.CreatedAt)
 	}
 
 	if err != nil {
