@@ -57,5 +57,6 @@ type KeyCapabilities struct {
 type CachedMessage struct {
 	ID               string `json:"id"`
 	EncryptedPayload string `json:"encryptedPayload"`
+	KeyRecordID      string `json:"keyRecordId"`
 	IV               string `json:"iv"`
 }
