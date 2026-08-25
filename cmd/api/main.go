@@ -33,14 +33,6 @@ func main() {
 	// 3. Chi Router
 	r := chi.NewRouter()
 
-	corsMiddleware := cors.Handler(cors.Options{
-		AllowedOrigins:   cfg.AllowedOrigins,
-		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-CSRF-Token"},
-		ExposedHeaders:   []string{"Link"},
-		AllowCredentials: true,
-		MaxAge:           300, // Preflight request (OPTIONS) cache duration in seconds
-	})
 	r.Use(chiMiddleware.Logger)
 	r.Use(chiMiddleware.Recoverer)
 
@@ -54,51 +46,55 @@ func main() {
 		r.Get("/.well-known/openpgpkey/hu/{hash}", wksHandler.GetPublicKey)
 	})
 
+	r.Use(cors.Handler(cors.Options{
+		AllowedOrigins:   cfg.AllowedOrigins,
+		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-CSRF-Token"},
+		ExposedHeaders:   []string{"Link"},
+		AllowCredentials: true,
+		MaxAge:           300,
+	}))
+
 	memBridge := bridge.NewMemoryBridge()
 	bridgeHandler := handlers.NewBridgeHandler(memBridge)
 	authHandler := handlers.NewAuthHandler(database, cfg)
 	vaultHandler := handlers.NewVaultHandler(database)
 
+	// Public routes
+	r.Post("/api/auth/login", authHandler.Login)
+
+	// Health route
+	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if err := database.Pool.Ping(r.Context()); err != nil {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			w.Write([]byte(`{"status":"error","db":"disconnected"}`))
+			return
+		}
+		w.Write([]byte(`{"status":"ok","db":"connected"}`))
+	})
+
+	// Public bridge route
+	r.Get("/api/bridge/secret/{id}", bridgeHandler.ConsumeSecret)
+
+	// Protected routes (JWT)
 	r.Group(func(r chi.Router) {
-		r.Use(corsMiddleware)
-		// Public routes
-		r.Post("/api/auth/login", authHandler.Login)
+		r.Use(middleware.AuthMiddleware(database, cfg.JWTSecret))
+		r.Get("/api/auth/me", authHandler.Me)
+		r.Post("/api/auth/change-password", authHandler.ChangePassword)
+		r.Post("/api/auth/logout-others", authHandler.LogoutOthers)
+		r.Get("/api/auth/logout", authHandler.LogoutAll)
+		r.Get("/api/vault", vaultHandler.GetVault)
+		r.Post("/api/vault", vaultHandler.SyncVault)
+		r.Delete("/api/vault/cache", vaultHandler.ClearMessageCache)
+		r.Delete("/api/vault/cache/messages", vaultHandler.DeleteCachedMessages)
+		r.Post("/api/bridge/secret", bridgeHandler.PushSecret)
+	})
 
-		// Health route with DB ping
-		r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
-
-			if err := database.Pool.Ping(r.Context()); err != nil {
-				w.WriteHeader(http.StatusServiceUnavailable)
-				w.Write([]byte(`{"status":"error","db":"disconnected"}`))
-				return
-			}
-
-			w.Write([]byte(`{"status":"ok","db":"connected"}`))
-		})
-
-		// Public routes for the ephemeral RAM bridge
-		r.Get("/api/bridge/secret/{id}", bridgeHandler.ConsumeSecret)
-
-		// Protected routes
-		r.Group(func(r chi.Router) {
-			r.Use(middleware.AuthMiddleware(database, cfg.JWTSecret))
-			r.Get("/api/auth/me", authHandler.Me)
-			r.Post("/api/auth/change-password", authHandler.ChangePassword)
-			r.Post("/api/auth/logout-others", authHandler.LogoutOthers)
-			r.Get("/api/auth/logout", authHandler.LogoutAll)
-			r.Get("/api/vault", vaultHandler.GetVault)
-			r.Post("/api/vault", vaultHandler.SyncVault)
-			r.Delete("/api/vault/cache", vaultHandler.ClearMessageCache)
-			r.Delete("/api/vault/cache/messages", vaultHandler.DeleteCachedMessages)
-			r.Post("/api/bridge/secret", bridgeHandler.PushSecret)
-		})
-
-		r.Group(func(r chi.Router) {
-			r.Use(middleware.InternalMiddleware(cfg.InternalSecret))
-
-			r.Post("/api/internal/bridge/secret", bridgeHandler.InternalPushSecret)
-		})
+	// Internal routes
+	r.Group(func(r chi.Router) {
+		r.Use(middleware.InternalMiddleware(cfg.InternalSecret))
+		r.Post("/api/internal/bridge/secret", bridgeHandler.InternalPushSecret)
 	})
 
 	// 4. Start server
