@@ -63,6 +63,7 @@ func main() {
 	wksHandler := handlers.NewWKSHandler(database)
 
 	r.Get("/.well-known/openpgpkey/hu/{hash}", wksHandler.GetPublicKey)
+	r.Get("/.well-known/openpgpkey/{domain}/hu/{hash}", wksHandler.GetPublicKey)
 
 	// Public routes
 	r.Post("/api/auth/login", authHandler.Login)
