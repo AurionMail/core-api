@@ -42,6 +42,7 @@ type PGPKey struct {
 	Algorithm           string          `json:"algorithm"`
 	Capabilities        KeyCapabilities `json:"capabilities"`
 	Default             bool            `json:"default,omitempty"`
+	Main                bool            `json:"main,omitempty"`
 	Recovery            bool            `json:"recovery,omitempty"`
 	Recoverable         bool            `json:"recoverable,omitempty"`
 	AESSalt             string          `json:"aesSalt,omitempty"`
