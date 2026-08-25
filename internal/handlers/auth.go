@@ -6,6 +6,7 @@ import (
 	"aurion-api/internal/db"
 	"aurion-api/internal/middleware"
 	"aurion-api/internal/models"
+	"aurion-api/internal/wks"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -37,6 +38,7 @@ type LoginResponse struct {
 	User  models.User `json:"user"`
 }
 
+// email is not email, it is username.
 func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	var req LoginRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -58,12 +60,13 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	err = h.DB.Pool.QueryRow(r.Context(), query, email).Scan(&user.ID, &user.Email, &user.TokenVersion, &user.CreatedAt)
 
 	if err == pgx.ErrNoRows {
+		wkdHash := wks.HashLocalPart(email)
 		// Auto-provisioning: valid LDAP user is added to the local DB
 		insertQuery := `
-            INSERT INTO users (email) 
-            VALUES ($1) 
+            INSERT INTO users (email, wkd_hash) 
+            VALUES ($1, $2) 
             RETURNING id, email, token_version, created_at`
-		err = h.DB.Pool.QueryRow(r.Context(), insertQuery, email).Scan(&user.ID, &user.Email, &user.TokenVersion, &user.CreatedAt)
+		err = h.DB.Pool.QueryRow(r.Context(), insertQuery, email, wkdHash).Scan(&user.ID, &user.Email, &user.TokenVersion, &user.CreatedAt)
 	}
 
 	if err != nil {
