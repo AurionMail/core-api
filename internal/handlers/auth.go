@@ -7,272 +7,114 @@ import (
 	"aurion-api/internal/db"
 	"aurion-api/internal/middleware"
 	"aurion-api/internal/models"
-	"aurion-api/internal/opaquei"
 	"aurion-api/internal/wks"
-	"encoding/hex"
 	"encoding/json"
 	"log"
 	"net/http"
 	"strings"
-	"sync"
-	"time"
 
-	"github.com/bytemare/opaque"
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
 
 type AuthHandler struct {
-	DB             *db.DB
-	Cfg            *config.Config
-	LDAP           *auth.LDAPAuthenticator
-	opaqueServer   *opaque.Server
-	deserializer   *opaque.Deserializer
-	opaqueSessions map[string]*models.OpaqueSession
-	opaqueMutex    sync.RWMutex
-	Bridge         *bridge.MemoryBridge
+	DB     *db.DB
+	Cfg    *config.Config
+	LDAP   *auth.LDAPAuthenticator
+	Bridge *bridge.MemoryBridge
 }
 
 func NewAuthHandler(database *db.DB, cfg *config.Config, bridge *bridge.MemoryBridge) *AuthHandler {
-	// serverID peut être le nom de ton domaine ou une chaîne unique fixe ex: "aurion-api"
-	server, err := opaquei.InitOpaqueServer(cfg.OpaqueOPRFSeed, cfg.OpaquePrivateKey, "aurion-api")
-	if err != nil {
-		log.Fatalf("Échec de l'initialisation du serveur OPAQUE persisté : %v", err)
-	}
-
-	deserializer, err := opaque.DefaultConfiguration().Deserializer()
-	if err != nil {
-		log.Fatalf("Impossible de créer le désérialiseur OPAQUE : %v", err)
-	}
 
 	return &AuthHandler{
-		DB:             database,
-		Cfg:            cfg,
-		LDAP:           auth.NewLDAPAuthenticator(cfg),
-		opaqueServer:   server,
-		deserializer:   deserializer,
-		opaqueSessions: make(map[string]*models.OpaqueSession),
-		Bridge:         bridge,
+		DB:     database,
+		Cfg:    cfg,
+		LDAP:   auth.NewLDAPAuthenticator(cfg),
+		Bridge: bridge,
 	}
 }
 
-// 1. Inscription : Init & Finalize
-func (h *AuthHandler) RegisterInit(w http.ResponseWriter, r *http.Request) {
-	var req models.OpaqueRegisterInitRequest
+type setOpaqueRequest struct {
+	Username string `json:"username"`
+	Opaque   string `json:"opaque"`
+}
+
+type getOpaqueRequest struct {
+	Username string `json:"username"`
+}
+
+type getOpaqueResponse struct {
+	Opaque string `json:"opaque"`
+}
+
+func (h *AuthHandler) SetOpaque(w http.ResponseWriter, r *http.Request) {
+	var req setOpaqueRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, `{"error":"Format JSON invalide"}`, http.StatusBadRequest)
+		http.Error(w, `{"error":"Invalid JSON format"}`, http.StatusBadRequest)
 		return
 	}
 
-	reqBytes, err := hex.DecodeString(req.RegistrationRequest)
-	if err != nil {
-		http.Error(w, `{"error":"RegistrationRequest doit être du Hex"}`, http.StatusBadRequest)
+	req.Username = strings.TrimSpace(req.Username)
+	req.Opaque = strings.TrimSpace(req.Opaque)
+
+	if req.Username == "" || req.Opaque == "" {
+		http.Error(w, `{"error":"username and opaque fields are required"}`, http.StatusBadRequest)
 		return
 	}
 
-	// Deserialisation de la requete d'inscription
-	regReq, err := h.deserializer.RegistrationRequest(reqBytes)
-	if err != nil {
-		http.Error(w, `{"error":"RegistrationRequest invalide"}`, http.StatusBadRequest)
-		return
-	}
+	wkdHash := wks.HashLocalPart(req.Username)
 
-	// Appel direct sur opaque.Server
-	resp, err := h.opaqueServer.RegistrationResponse(regReq, nil, nil)
+	query := `
+		INSERT INTO users (username, wkd_hash, opaque_record)
+		VALUES ($1, $2, $3)
+		ON CONFLICT (username) 
+		DO UPDATE SET opaque_record = EXCLUDED.opaque_record, updated_at = NOW()`
+
+	_, err := h.DB.Pool.Exec(r.Context(), query, req.Username, wkdHash, req.Opaque)
 	if err != nil {
-		log.Printf("Erreur RegistrationResponse OPAQUE: %v", err)
-		http.Error(w, `{"error":"Échec de l'initialisation OPAQUE"}`, http.StatusBadRequest)
+		log.Printf("Error saving OPAQUE record for user %s: %v", req.Username, err)
+		http.Error(w, `{"error":"Internal server error"}`, http.StatusInternalServerError)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(models.OpaqueRegisterInitResponse{
-		RegistrationResponse: hex.EncodeToString(resp.Serialize()),
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{
+		"message": "OPAQUE record stored successfully",
 	})
 }
 
-// 2. Inscription : Stockage du record dans la BDD
-func (h *AuthHandler) RegisterFinalize(w http.ResponseWriter, r *http.Request) {
-	var req models.OpaqueRegisterFinalizeRequest
+func (h *AuthHandler) GetOpaque(w http.ResponseWriter, r *http.Request) {
+	var req getOpaqueRequest
+
+	// Support du format JSON Body
+
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, `{"error":"Format JSON invalide"}`, http.StatusBadRequest)
+		http.Error(w, `{"error":"Invalid JSON format"}`, http.StatusBadRequest)
+		return
+	}
+	req.Username = strings.TrimSpace(req.Username)
+
+	if req.Username == "" {
+		http.Error(w, `{"error":"username parameter is required"}`, http.StatusBadRequest)
 		return
 	}
 
-	if req.Email == "" || req.RegistrationRecord == "" {
-		http.Error(w, `{"error":"Champs requis manquants"}`, http.StatusBadRequest)
-		return
-	}
+	var opaqueRecord string
+	query := `SELECT opaque_record FROM users WHERE username = $1`
+	err := h.DB.Pool.QueryRow(r.Context(), query, req.Username).Scan(&opaqueRecord)
 
-	wkdHash := wks.HashLocalPart(req.Email)
-
-	var user models.User
-	query := `
-        INSERT INTO users (username, wkd_hash, opaque_record) 
-        VALUES ($1, $2, $3) 
-        RETURNING id, username, token_version, created_at`
-
-	err := h.DB.Pool.QueryRow(
-		r.Context(),
-		query,
-		req.Email,
-		wkdHash,
-		req.RegistrationRecord,
-	).Scan(&user.ID, &user.Username, &user.TokenVersion, &user.CreatedAt)
-
-	if err != nil {
-		log.Printf("Erreur création utilisateur OPAQUE %s: %v", req.Email, err)
-		http.Error(w, `{"error":"L'utilisateur existe déjà ou erreur serveur"}`, http.StatusConflict)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(user)
-}
-
-// 3. Authentification : Step 1 (Challenge -> KE1 à KE2)
-func (h *AuthHandler) OpaqueChallenge(w http.ResponseWriter, r *http.Request) {
-	var req models.OpaqueChallengeRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, `{"error":"Format JSON invalide"}`, http.StatusBadRequest)
-		return
-	}
-
-	ke1Bytes, err := hex.DecodeString(req.CredentialRequest)
-	if err != nil {
-		http.Error(w, `{"error":"CredentialRequest doit être du Hex"}`, http.StatusBadRequest)
-		return
-	}
-
-	ke1Msg, err := h.deserializer.KE1(ke1Bytes)
-	if err != nil {
-		http.Error(w, `{"error":"Message KE1 invalide"}`, http.StatusBadRequest)
-		return
-	}
-
-	// Récupération du record OPAQUE de l'utilisateur
-	var user struct {
-		ID           string
-		Email        string
-		OpaqueRecord string
-	}
-	query := `SELECT id, username, opaque_record FROM users WHERE username = $1`
-	err = h.DB.Pool.QueryRow(r.Context(), query, req.Username).Scan(&user.ID, &user.Email, &user.OpaqueRecord)
-
-	if err == pgx.ErrNoRows {
-		http.Error(w, `{"error":"Identifiants invalides"}`, http.StatusUnauthorized)
+	if err == pgx.ErrNoRows || opaqueRecord == "" {
+		http.Error(w, `{"error":"User or OPAQUE record not found"}`, http.StatusNotFound)
 		return
 	} else if err != nil {
-		log.Printf("Erreur récupération utilisateur %s: %v", req.Username, err)
-		http.Error(w, `{"error":"Erreur interne serveur"}`, http.StatusInternalServerError)
-		return
-	}
-
-	recordBytes, err := hex.DecodeString(user.OpaqueRecord)
-	if err != nil {
-		http.Error(w, `{"error":"Enregistrement OPAQUE corrompu"}`, http.StatusInternalServerError)
-		return
-	}
-
-	regRecord, err := h.deserializer.RegistrationRecord(recordBytes)
-	if err != nil {
-		http.Error(w, `{"error":"Format du record OPAQUE invalide"}`, http.StatusInternalServerError)
-		return
-	}
-
-	clientRecord := &opaque.ClientRecord{
-		RegistrationRecord:   regRecord,
-		CredentialIdentifier: []byte(user.Email),
-		ClientIdentity:       []byte(user.Email),
-	}
-
-	// Génération du message KE2 et des artefacts de session via le serveur OPAQUE
-	ke2Msg, serverOutput, err := h.opaqueServer.GenerateKE2(ke1Msg, clientRecord)
-	if err != nil {
-		log.Printf("Erreur GenerateKE2 OPAQUE pour %s: %v", req.Username, err)
-		http.Error(w, `{"error":"Échec d'initialisation du handshake"}`, http.StatusBadRequest)
-		return
-	}
-
-	sessionID := uuid.New().String()
-
-	h.opaqueMutex.Lock()
-	h.opaqueSessions[sessionID] = &models.OpaqueSession{
-		UserID:       user.ID,
-		Email:        user.Email,
-		ServerOutput: serverOutput,
-		ExpiresAt:    time.Now().Add(2 * time.Minute),
-	}
-	h.opaqueMutex.Unlock()
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(models.OpaqueChallengeResponse{
-		SessionID:          sessionID,
-		CredentialResponse: hex.EncodeToString(ke2Msg.Serialize()),
-	})
-}
-
-// 4. Authentification : Step 2 (Verify -> KE3 validation)
-func (h *AuthHandler) OpaqueVerify(w http.ResponseWriter, r *http.Request) {
-	var req models.OpaqueVerifyRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, `{"error":"Format JSON invalide"}`, http.StatusBadRequest)
-		return
-	}
-
-	h.opaqueMutex.RLock()
-	sess, exists := h.opaqueSessions[req.SessionID]
-	h.opaqueMutex.RUnlock()
-
-	if !exists || time.Now().After(sess.ExpiresAt) {
-		http.Error(w, `{"error":"Session expirée ou invalide"}`, http.StatusUnauthorized)
-		return
-	}
-
-	defer func() {
-		h.opaqueMutex.Lock()
-		delete(h.opaqueSessions, req.SessionID)
-		h.opaqueMutex.Unlock()
-	}()
-
-	ke3Bytes, err := hex.DecodeString(req.CredentialFinalization)
-	if err != nil {
-		http.Error(w, `{"error":"CredentialFinalization invalide"}`, http.StatusBadRequest)
-		return
-	}
-
-	ke3Msg, err := h.deserializer.KE3(ke3Bytes)
-	if err != nil {
-		http.Error(w, `{"error":"Message KE3 invalide"}`, http.StatusBadRequest)
-		return
-	}
-
-	// Validation finale de KE3 avec la MAC attendue issue de ServerOutput
-	err = h.opaqueServer.LoginFinish(ke3Msg, sess.ServerOutput.ClientMAC)
-	if err != nil {
-		http.Error(w, `{"error":"Identifiants invalides"}`, http.StatusUnauthorized)
-		return
-	}
-
-	var user models.User
-	query := `SELECT id, username, token_version, created_at FROM users WHERE id = $1`
-	err = h.DB.Pool.QueryRow(r.Context(), query, sess.UserID).Scan(&user.ID, &user.Username, &user.TokenVersion, &user.CreatedAt)
-	if err != nil {
-		http.Error(w, `{"error":"Erreur lors de la récupération de l'utilisateur"}`, http.StatusInternalServerError)
-		return
-	}
-
-	token, err := auth.GenerateToken(user.ID, user.Username, user.TokenVersion, h.Cfg.JWTSecret)
-	if err != nil {
-		http.Error(w, `{"error":"Erreur de génération de token"}`, http.StatusInternalServerError)
+		log.Printf("Error retrieving OPAQUE record for user %s: %v", req.Username, err)
+		http.Error(w, `{"error":"Internal server error"}`, http.StatusInternalServerError)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(models.OpaqueVerifyResponse{
-		Token: token,
-		User:  user,
+	json.NewEncoder(w).Encode(getOpaqueResponse{
+		Opaque: opaqueRecord,
 	})
 }
 

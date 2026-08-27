@@ -82,7 +82,6 @@ func main() {
 	})
 
 	r.Get("/api/bridge/secret/{id}", bridgeHandler.ConsumeSecret)
-	r.Post("/api/auth/srp/challenge", authHandler.OpaqueChallenge)
 
 	// Protected routes (JWT)
 	r.Group(func(r chi.Router) {
@@ -101,9 +100,8 @@ func main() {
 	// Internal routes
 	r.Group(func(r chi.Router) {
 		r.Use(middleware.InternalMiddleware(cfg.InternalSecret))
-		r.Post("/api/internal/auth/register/init", authHandler.RegisterInit)
-		r.Post("/api/internal/auth/register/finalize", authHandler.RegisterFinalize)
-		r.Post("/api/internal/auth/srp/verify", authHandler.OpaqueVerify)
+		r.Post("/api/internal/opaque/set", authHandler.SetOpaque)
+		r.Post("/api/internal/opaque/get", authHandler.GetOpaque)
 		r.Post("/api/internal/bridge/secret", bridgeHandler.InternalPushSecret)
 	})
 

@@ -9,17 +9,15 @@ import (
 )
 
 type Config struct {
-	Port             string
-	Env              string
-	DBConn           string
-	JWTSecret        string
-	LDAPURL          string
-	LDAPBaseDN       string
-	LDAPUserAttr     string
-	AllowedOrigins   []string
-	InternalSecret   string
-	OpaqueOPRFSeed   string
-	OpaquePrivateKey string
+	Port           string
+	Env            string
+	DBConn         string
+	JWTSecret      string
+	LDAPURL        string
+	LDAPBaseDN     string
+	LDAPUserAttr   string
+	AllowedOrigins []string
+	InternalSecret string
 }
 
 func Load() (*Config, error) {
