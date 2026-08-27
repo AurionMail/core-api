@@ -82,6 +82,7 @@ func main() {
 	})
 
 	r.Get("/api/bridge/secret/{id}", bridgeHandler.ConsumeSecret)
+	r.Post("/api/auth/srp/challenge", authHandler.SRPChallenge)
 
 	// Protected routes (JWT)
 	r.Group(func(r chi.Router) {
@@ -100,12 +101,14 @@ func main() {
 	// Internal routes
 	r.Group(func(r chi.Router) {
 		r.Use(middleware.InternalMiddleware(cfg.InternalSecret))
+		r.Post("/api/internal/auth/register", authHandler.Register) // User creation / verifier storage
+		r.Post("/api/internal/auth/srp/verify", authHandler.SRPVerify)
 		r.Post("/api/internal/bridge/secret", bridgeHandler.InternalPushSecret)
 	})
 
 	// 4. Start server
 	addr := fmt.Sprintf(":%s", cfg.Port)
-	log.Printf("🚀 aurion-api server started on http://localhost%s (%s)", addr, cfg.Env)
+	log.Printf("[OK] aurion-api server running on http://localhost%s (%s)", addr, cfg.Env)
 	if err := http.ListenAndServe(addr, r); err != nil {
 		log.Fatalf("Server error: %v", err)
 	}
