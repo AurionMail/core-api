@@ -12,8 +12,7 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE INDEX IF NOT EXISTS idx_users_wkd_hash ON users(wkd_hash);
 
 ALTER TABLE users 
-    ADD COLUMN srp_verifier TEXT,
-    ADD COLUMN srp_salt TEXT;
+    ADD COLUMN opaque_record TEXT;
 
 CREATE TABLE IF NOT EXISTS user_vault (
     user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,

@@ -7,7 +7,9 @@ import (
 	"aurion-api/internal/db"
 	"aurion-api/internal/middleware"
 	"aurion-api/internal/models"
+	"aurion-api/internal/opaquei"
 	"aurion-api/internal/wks"
+	"encoding/hex"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -15,55 +17,90 @@ import (
 	"sync"
 	"time"
 
+	"github.com/bytemare/opaque"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	srp "github.com/opencoff/go-srp"
 )
 
-type SRPSession struct {
-	UserID    string
-	Email     string
-	SRPServer *srp.Server
-	SRPHandle *srp.SRP
-	ExpiresAt time.Time
-}
-
 type AuthHandler struct {
-	DB          *db.DB
-	Cfg         *config.Config
-	LDAP        *auth.LDAPAuthenticator
-	srpSessions map[string]*SRPSession
-	srpMutex    sync.RWMutex
-	Bridge      *bridge.MemoryBridge
+	DB             *db.DB
+	Cfg            *config.Config
+	LDAP           *auth.LDAPAuthenticator
+	opaqueServer   *opaque.Server
+	deserializer   *opaque.Deserializer
+	opaqueSessions map[string]*models.OpaqueSession
+	opaqueMutex    sync.RWMutex
+	Bridge         *bridge.MemoryBridge
 }
 
 func NewAuthHandler(database *db.DB, cfg *config.Config, bridge *bridge.MemoryBridge) *AuthHandler {
+	// serverID peut être le nom de ton domaine ou une chaîne unique fixe ex: "aurion-api"
+	server, err := opaquei.InitOpaqueServer(cfg.OpaqueOPRFSeed, cfg.OpaquePrivateKey, "aurion-api")
+	if err != nil {
+		log.Fatalf("Échec de l'initialisation du serveur OPAQUE persisté : %v", err)
+	}
+
+	deserializer, err := opaque.DefaultConfiguration().Deserializer()
+	if err != nil {
+		log.Fatalf("Impossible de créer le désérialiseur OPAQUE : %v", err)
+	}
+
 	return &AuthHandler{
-		DB:          database,
-		Cfg:         cfg,
-		LDAP:        auth.NewLDAPAuthenticator(cfg),
-		srpSessions: make(map[string]*SRPSession),
-		Bridge:      bridge,
+		DB:             database,
+		Cfg:            cfg,
+		LDAP:           auth.NewLDAPAuthenticator(cfg),
+		opaqueServer:   server,
+		deserializer:   deserializer,
+		opaqueSessions: make(map[string]*models.OpaqueSession),
+		Bridge:         bridge,
 	}
 }
 
-// --------SRP Auth----------
-
-// Register stores the encoded SRP verifier and hashed identity returned by the client (called by SSO backend after checking the user's temporary credentials)
-func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Email       string `json:"email"`
-		SRPID       string `json:"srpId"`       // Hashed identity (I) from client/lib
-		SRPVerifier string `json:"srpVerifier"` // Encoded verifier string (verif)
-	}
-
+// 1. Inscription : Init & Finalize
+func (h *AuthHandler) RegisterInit(w http.ResponseWriter, r *http.Request) {
+	var req models.OpaqueRegisterInitRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, `{"error":"Invalid JSON format"}`, http.StatusBadRequest)
+		http.Error(w, `{"error":"Format JSON invalide"}`, http.StatusBadRequest)
 		return
 	}
 
-	if req.Email == "" || req.SRPID == "" || req.SRPVerifier == "" {
-		http.Error(w, `{"error":"Missing required fields"}`, http.StatusBadRequest)
+	reqBytes, err := hex.DecodeString(req.RegistrationRequest)
+	if err != nil {
+		http.Error(w, `{"error":"RegistrationRequest doit être du Hex"}`, http.StatusBadRequest)
+		return
+	}
+
+	// Deserialisation de la requete d'inscription
+	regReq, err := h.deserializer.RegistrationRequest(reqBytes)
+	if err != nil {
+		http.Error(w, `{"error":"RegistrationRequest invalide"}`, http.StatusBadRequest)
+		return
+	}
+
+	// Appel direct sur opaque.Server
+	resp, err := h.opaqueServer.RegistrationResponse(regReq, nil, nil)
+	if err != nil {
+		log.Printf("Erreur RegistrationResponse OPAQUE: %v", err)
+		http.Error(w, `{"error":"Échec de l'initialisation OPAQUE"}`, http.StatusBadRequest)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(models.OpaqueRegisterInitResponse{
+		RegistrationResponse: hex.EncodeToString(resp.Serialize()),
+	})
+}
+
+// 2. Inscription : Stockage du record dans la BDD
+func (h *AuthHandler) RegisterFinalize(w http.ResponseWriter, r *http.Request) {
+	var req models.OpaqueRegisterFinalizeRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, `{"error":"Format JSON invalide"}`, http.StatusBadRequest)
+		return
+	}
+
+	if req.Email == "" || req.RegistrationRecord == "" {
+		http.Error(w, `{"error":"Champs requis manquants"}`, http.StatusBadRequest)
 		return
 	}
 
@@ -71,22 +108,21 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 
 	var user models.User
 	query := `
-		INSERT INTO users (username, wkd_hash, srp_id, srp_verifier) 
-		VALUES ($1, $2, $3, $4) 
-		RETURNING id, username, token_version, created_at`
+        INSERT INTO users (username, wkd_hash, opaque_record) 
+        VALUES ($1, $2, $3) 
+        RETURNING id, username, token_version, created_at`
 
 	err := h.DB.Pool.QueryRow(
 		r.Context(),
 		query,
 		req.Email,
 		wkdHash,
-		req.SRPID,
-		req.SRPVerifier,
+		req.RegistrationRecord,
 	).Scan(&user.ID, &user.Username, &user.TokenVersion, &user.CreatedAt)
 
 	if err != nil {
-		log.Printf("Error creating user %s: %v", req.Email, err)
-		http.Error(w, `{"error":"User already exists or server error"}`, http.StatusConflict)
+		log.Printf("Erreur création utilisateur OPAQUE %s: %v", req.Email, err)
+		http.Error(w, `{"error":"L'utilisateur existe déjà ou erreur serveur"}`, http.StatusConflict)
 		return
 	}
 
@@ -95,128 +131,147 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(user)
 }
 
-// SRPChallenge handles step 1 of the SRP-6a authentication flow (available to the public, no authentication required)
-func (h *AuthHandler) SRPChallenge(w http.ResponseWriter, r *http.Request) {
-	var req models.SRPChallengeRequest
+// 3. Authentification : Step 1 (Challenge -> KE1 à KE2)
+func (h *AuthHandler) OpaqueChallenge(w http.ResponseWriter, r *http.Request) {
+	var req models.OpaqueChallengeRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, `{"error":"Invalid JSON format"}`, http.StatusBadRequest)
+		http.Error(w, `{"error":"Format JSON invalide"}`, http.StatusBadRequest)
 		return
 	}
 
-	// 1. Parse client credentials string (contains identity ID and public key A)
-	srpID, clientA, err := srp.ServerBegin(req.A)
+	ke1Bytes, err := hex.DecodeString(req.CredentialRequest)
 	if err != nil {
-		log.Printf("Error parsing client credentials: %v", err)
-		http.Error(w, `{"error":"Invalid credentials payload"}`, http.StatusBadRequest)
+		http.Error(w, `{"error":"CredentialRequest doit être du Hex"}`, http.StatusBadRequest)
 		return
 	}
 
-	// 2. Fetch user by hashed SRP ID
-	var user struct {
-		ID          string
-		Email       string
-		SRPVerifier string
+	ke1Msg, err := h.deserializer.KE1(ke1Bytes)
+	if err != nil {
+		http.Error(w, `{"error":"Message KE1 invalide"}`, http.StatusBadRequest)
+		return
 	}
-	query := `SELECT id, username, srp_verifier FROM users WHERE srp_id = $1`
-	err = h.DB.Pool.QueryRow(r.Context(), query, srpID).Scan(&user.ID, &user.Email, &user.SRPVerifier)
+
+	// Récupération du record OPAQUE de l'utilisateur
+	var user struct {
+		ID           string
+		Email        string
+		OpaqueRecord string
+	}
+	query := `SELECT id, username, opaque_record FROM users WHERE username = $1`
+	err = h.DB.Pool.QueryRow(r.Context(), query, req.Username).Scan(&user.ID, &user.Email, &user.OpaqueRecord)
 
 	if err == pgx.ErrNoRows {
-		http.Error(w, `{"error":"Invalid credentials"}`, http.StatusUnauthorized)
+		http.Error(w, `{"error":"Identifiants invalides"}`, http.StatusUnauthorized)
 		return
 	} else if err != nil {
-		log.Printf("Error retrieving user with SRP ID %s: %v", srpID, err)
-		http.Error(w, `{"error":"Internal server error"}`, http.StatusInternalServerError)
+		log.Printf("Erreur récupération utilisateur %s: %v", req.Username, err)
+		http.Error(w, `{"error":"Erreur interne serveur"}`, http.StatusInternalServerError)
 		return
 	}
 
-	// 3. Reconstruct SRP and Verifier objects from stored string
-	srpHandle, verifier, err := srp.MakeSRPVerifier(user.SRPVerifier)
+	recordBytes, err := hex.DecodeString(user.OpaqueRecord)
 	if err != nil {
-		log.Printf("Error reconstructing SRP verifier: %v", err)
-		http.Error(w, `{"error":"Corrupted authentication data"}`, http.StatusInternalServerError)
+		http.Error(w, `{"error":"Enregistrement OPAQUE corrompu"}`, http.StatusInternalServerError)
 		return
 	}
 
-	// 4. Create new Server instance for this session
-	srv, err := srpHandle.NewServer(verifier, clientA)
+	regRecord, err := h.deserializer.RegistrationRecord(recordBytes)
 	if err != nil {
-		log.Printf("Error creating SRP server instance: %v", err)
-		http.Error(w, `{"error":"Failed to initiate SRP handshake"}`, http.StatusBadRequest)
+		http.Error(w, `{"error":"Format du record OPAQUE invalide"}`, http.StatusInternalServerError)
+		return
+	}
+
+	clientRecord := &opaque.ClientRecord{
+		RegistrationRecord:   regRecord,
+		CredentialIdentifier: []byte(user.Email),
+		ClientIdentity:       []byte(user.Email),
+	}
+
+	// Génération du message KE2 et des artefacts de session via le serveur OPAQUE
+	ke2Msg, serverOutput, err := h.opaqueServer.GenerateKE2(ke1Msg, clientRecord)
+	if err != nil {
+		log.Printf("Erreur GenerateKE2 OPAQUE pour %s: %v", req.Username, err)
+		http.Error(w, `{"error":"Échec d'initialisation du handshake"}`, http.StatusBadRequest)
 		return
 	}
 
 	sessionID := uuid.New().String()
 
-	h.srpMutex.Lock()
-	h.srpSessions[sessionID] = &SRPSession{
-		UserID:    user.ID,
-		Email:     user.Email,
-		SRPServer: srv,
-		SRPHandle: srpHandle,
-		ExpiresAt: time.Now().Add(2 * time.Minute),
+	h.opaqueMutex.Lock()
+	h.opaqueSessions[sessionID] = &models.OpaqueSession{
+		UserID:       user.ID,
+		Email:        user.Email,
+		ServerOutput: serverOutput,
+		ExpiresAt:    time.Now().Add(2 * time.Minute),
 	}
-	h.srpMutex.Unlock()
+	h.opaqueMutex.Unlock()
 
-	// 5. Respond with server credentials (B and salt s encoded by go-srp)
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(models.SRPChallengeResponse{
-		SessionID: sessionID,
-		B:         srv.Credentials(),
+	json.NewEncoder(w).Encode(models.OpaqueChallengeResponse{
+		SessionID:          sessionID,
+		CredentialResponse: hex.EncodeToString(ke2Msg.Serialize()),
 	})
 }
 
-// SRPVerify handles step 2 of the SRP-6a authentication flow (available to the SSO backend, requires internal secret authentication)
-func (h *AuthHandler) SRPVerify(w http.ResponseWriter, r *http.Request) {
-	var req models.SRPVerifyRequest
+// 4. Authentification : Step 2 (Verify -> KE3 validation)
+func (h *AuthHandler) OpaqueVerify(w http.ResponseWriter, r *http.Request) {
+	var req models.OpaqueVerifyRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, `{"error":"Invalid JSON format"}`, http.StatusBadRequest)
+		http.Error(w, `{"error":"Format JSON invalide"}`, http.StatusBadRequest)
 		return
 	}
 
-	h.srpMutex.RLock()
-	sess, exists := h.srpSessions[req.SessionID]
-	h.srpMutex.RUnlock()
+	h.opaqueMutex.RLock()
+	sess, exists := h.opaqueSessions[req.SessionID]
+	h.opaqueMutex.RUnlock()
 
 	if !exists || time.Now().After(sess.ExpiresAt) {
-		http.Error(w, `{"error":"Session expired or invalid"}`, http.StatusUnauthorized)
+		http.Error(w, `{"error":"Session expirée ou invalide"}`, http.StatusUnauthorized)
 		return
 	}
 
 	defer func() {
-		h.srpMutex.Lock()
-		delete(h.srpSessions, req.SessionID)
-		h.srpMutex.Unlock()
+		h.opaqueMutex.Lock()
+		delete(h.opaqueSessions, req.SessionID)
+		h.opaqueMutex.Unlock()
 	}()
 
-	// 1. Authenticate client proof M1 and generate server proof M2
-	serverProof, ok := sess.SRPServer.ClientOk(req.M1)
-	if ok != true {
-		http.Error(w, `{"error":"Invalid credentials"}`, http.StatusUnauthorized)
+	ke3Bytes, err := hex.DecodeString(req.CredentialFinalization)
+	if err != nil {
+		http.Error(w, `{"error":"CredentialFinalization invalide"}`, http.StatusBadRequest)
 		return
 	}
 
-	// 2. Fetch user profile and token version
+	ke3Msg, err := h.deserializer.KE3(ke3Bytes)
+	if err != nil {
+		http.Error(w, `{"error":"Message KE3 invalide"}`, http.StatusBadRequest)
+		return
+	}
+
+	// Validation finale de KE3 avec la MAC attendue issue de ServerOutput
+	err = h.opaqueServer.LoginFinish(ke3Msg, sess.ServerOutput.ClientMAC)
+	if err != nil {
+		http.Error(w, `{"error":"Identifiants invalides"}`, http.StatusUnauthorized)
+		return
+	}
+
 	var user models.User
 	query := `SELECT id, username, token_version, created_at FROM users WHERE id = $1`
-	err := h.DB.Pool.QueryRow(r.Context(), query, sess.UserID).Scan(&user.ID, &user.Username, &user.TokenVersion, &user.CreatedAt)
+	err = h.DB.Pool.QueryRow(r.Context(), query, sess.UserID).Scan(&user.ID, &user.Username, &user.TokenVersion, &user.CreatedAt)
 	if err != nil {
-		log.Printf("Error fetching user %s: %v", sess.UserID, err)
-		http.Error(w, `{"error":"Error fetching user details"}`, http.StatusInternalServerError)
+		http.Error(w, `{"error":"Erreur lors de la récupération de l'utilisateur"}`, http.StatusInternalServerError)
 		return
 	}
 
-	// 3. Generate JWT
 	token, err := auth.GenerateToken(user.ID, user.Username, user.TokenVersion, h.Cfg.JWTSecret)
 	if err != nil {
-		log.Printf("Error generating JWT for user %s: %v", user.Username, err)
-		http.Error(w, `{"error":"Error generating token"}`, http.StatusInternalServerError)
+		http.Error(w, `{"error":"Erreur de génération de token"}`, http.StatusInternalServerError)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(models.SRPVerifyResponse{
+	json.NewEncoder(w).Encode(models.OpaqueVerifyResponse{
 		Token: token,
-		M2:    serverProof,
 		User:  user,
 	})
 }
