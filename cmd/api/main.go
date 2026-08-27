@@ -58,7 +58,7 @@ func main() {
 
 	memBridge := bridge.NewMemoryBridge()
 	bridgeHandler := handlers.NewBridgeHandler(memBridge)
-	authHandler := handlers.NewAuthHandler(database, cfg)
+	authHandler := handlers.NewAuthHandler(database, cfg, memBridge)
 	vaultHandler := handlers.NewVaultHandler(database)
 	wksHandler := handlers.NewWKSHandler(database)
 
