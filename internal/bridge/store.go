@@ -103,8 +103,6 @@ func (b *MemoryBridge) Consume(id string) (*SecretBlob, bool) {
 
 // StoreLoginToken places an unencrypted username/token payload in RAM with a TTL
 func (b *MemoryBridge) StoreLoginToken(username, token string, ttl time.Duration) (*LoginTokenBlob, error) {
-	var id string
-
 	expiresAt := time.Now().UTC().Add(ttl)
 
 	blob := &LoginTokenBlob{
@@ -114,10 +112,10 @@ func (b *MemoryBridge) StoreLoginToken(username, token string, ttl time.Duration
 	}
 
 	blob.timer = time.AfterFunc(ttl, func() {
-		b.store.Delete(id)
+		b.store.Delete(token)
 	})
 
-	b.store.Store(id, blob)
+	b.store.Store(token, blob)
 	return blob, nil
 }
 
