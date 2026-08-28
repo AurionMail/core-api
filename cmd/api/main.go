@@ -58,7 +58,7 @@ func main() {
 
 	memBridge := bridge.NewMemoryBridge()
 	bridgeHandler := handlers.NewBridgeHandler(memBridge)
-	authHandler := handlers.NewAuthHandler(database, cfg)
+	authHandler := handlers.NewAuthHandler(database, cfg, memBridge)
 	vaultHandler := handlers.NewVaultHandler(database)
 	wksHandler := handlers.NewWKSHandler(database)
 
@@ -87,7 +87,6 @@ func main() {
 	r.Group(func(r chi.Router) {
 		r.Use(middleware.AuthMiddleware(database, cfg.JWTSecret))
 		r.Get("/api/auth/me", authHandler.Me)
-		r.Post("/api/auth/change-password", authHandler.ChangePassword)
 		r.Post("/api/auth/logout-others", authHandler.LogoutOthers)
 		r.Get("/api/auth/logout", authHandler.LogoutAll)
 		r.Get("/api/vault", vaultHandler.GetVault)
@@ -100,12 +99,14 @@ func main() {
 	// Internal routes
 	r.Group(func(r chi.Router) {
 		r.Use(middleware.InternalMiddleware(cfg.InternalSecret))
+		r.Post("/api/internal/opaque/set", authHandler.SetOpaque)
+		r.Post("/api/internal/opaque/get", authHandler.GetOpaque)
 		r.Post("/api/internal/bridge/secret", bridgeHandler.InternalPushSecret)
 	})
 
 	// 4. Start server
 	addr := fmt.Sprintf(":%s", cfg.Port)
-	log.Printf("🚀 aurion-api server started on http://localhost%s (%s)", addr, cfg.Env)
+	log.Printf("[OK] aurion-api server running on http://localhost%s (%s)", addr, cfg.Env)
 	if err := http.ListenAndServe(addr, r); err != nil {
 		log.Fatalf("Server error: %v", err)
 	}

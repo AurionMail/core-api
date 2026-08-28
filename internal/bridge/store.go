@@ -16,6 +16,14 @@ type SecretBlob struct {
 	timer         *time.Timer
 }
 
+// LoginTokenBlob represents an unencrypted authentication token associated with a username
+type LoginTokenBlob struct {
+	ID        string    `json:"id"`
+	Username  string    `json:"username"`
+	ExpiresAt time.Time `json:"expiresAt"`
+	timer     *time.Timer
+}
+
 type MemoryBridge struct {
 	store sync.Map
 }
@@ -71,12 +79,65 @@ func (b *MemoryBridge) Consume(id string) (*SecretBlob, bool) {
 		return nil, false
 	}
 
-	blob := value.(*SecretBlob)
+	blob, ok := value.(*SecretBlob)
+	if !ok {
+		// Target element wasn't a SecretBlob (e.g. LoginTokenBlob)
+		return nil, false
+	}
+
 	if blob.timer != nil {
 		blob.timer.Stop() // Cancels the automatic expiration timer
 	}
 
 	// Safety check if the TTL has passed at the exact moment of reading
+	if time.Now().UTC().After(blob.ExpiresAt) {
+		return nil, false
+	}
+
+	return blob, true
+}
+
+// ============================================================================
+// Login Token Methods
+// ============================================================================
+
+// StoreLoginToken places an unencrypted username/token payload in RAM with a TTL
+func (b *MemoryBridge) StoreLoginToken(username, token string, ttl time.Duration) (*LoginTokenBlob, error) {
+	var id string
+
+	expiresAt := time.Now().UTC().Add(ttl)
+
+	blob := &LoginTokenBlob{
+		ID:        token, // Using the token itself as the ID for direct retrieval
+		Username:  username,
+		ExpiresAt: expiresAt,
+	}
+
+	blob.timer = time.AfterFunc(ttl, func() {
+		b.store.Delete(id)
+	})
+
+	b.store.Store(id, blob)
+	return blob, nil
+}
+
+// ConsumeLoginToken retrieves the login token and DELETES it immediately from RAM (Burn after reading)
+func (b *MemoryBridge) ConsumeLoginToken(id string) (*LoginTokenBlob, bool) {
+	value, ok := b.store.LoadAndDelete(id)
+	if !ok {
+		return nil, false
+	}
+
+	blob, ok := value.(*LoginTokenBlob)
+	if !ok {
+		// Target element wasn't a LoginTokenBlob (e.g. SecretBlob)
+		return nil, false
+	}
+
+	if blob.timer != nil {
+		blob.timer.Stop()
+	}
+
 	if time.Now().UTC().After(blob.ExpiresAt) {
 		return nil, false
 	}
