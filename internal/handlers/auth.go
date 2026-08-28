@@ -143,26 +143,25 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// The username retrieved from the bridge is mapped to the 'email' field/variable
-	email := tokenBlob.Username
+	username := tokenBlob.Username
 
 	// 2. Synchronization / Retrieval in the local database (to retain the user_id UUID)
 	var user models.User
 	query := `SELECT id, username, token_version, created_at FROM users WHERE username = $1`
-	err := h.DB.Pool.QueryRow(r.Context(), query, email).Scan(&user.ID, &user.Username, &user.TokenVersion, &user.CreatedAt)
+	err := h.DB.Pool.QueryRow(r.Context(), query, username).Scan(&user.ID, &user.Username, &user.TokenVersion, &user.CreatedAt)
 
 	if err == pgx.ErrNoRows {
-		wkdHash := wks.HashLocalPart(email)
+		wkdHash := wks.HashLocalPart(username)
 		// Auto-provisioning: valid user is added to the local DB
 		insertQuery := `
 			INSERT INTO users (username, wkd_hash) 
 			VALUES ($1, $2) 
 			RETURNING id, username, token_version, created_at`
-		err = h.DB.Pool.QueryRow(r.Context(), insertQuery, email, wkdHash).Scan(&user.ID, &user.Username, &user.TokenVersion, &user.CreatedAt)
+		err = h.DB.Pool.QueryRow(r.Context(), insertQuery, username, wkdHash).Scan(&user.ID, &user.Username, &user.TokenVersion, &user.CreatedAt)
 	}
 
 	if err != nil {
-		log.Printf("Error when synchronizing user %s: %v", email, err)
+		log.Printf("Error when synchronizing user %s: %v", username, err)
 		http.Error(w, `{"error":"Error synchronizing account"}`, http.StatusInternalServerError)
 		return
 	}
@@ -170,7 +169,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	// 3. JWT token generation
 	token, err := auth.GenerateToken(user.ID, user.Username, user.TokenVersion, h.Cfg.JWTSecret)
 	if err != nil {
-		log.Printf("Error when generating JWT for user %s: %v", email, err)
+		log.Printf("Error when generating JWT for user %s: %v", username, err)
 		http.Error(w, `{"error":"Error generating token"}`, http.StatusInternalServerError)
 		return
 	}
@@ -251,58 +250,5 @@ func (h *AuthHandler) LogoutOthers(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(LoginResponse{
 		Token: token,
 		User:  user,
-	})
-}
-
-type ChangePasswordSRPRequest struct {
-	SRPSalt     string `json:"srpSalt"`
-	SRPVerifier string `json:"srpVerifier"`
-}
-
-func (h *AuthHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
-	var req ChangePasswordSRPRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, `{"error":"Invalid JSON format"}`, http.StatusBadRequest)
-		return
-	}
-
-	req.SRPSalt = strings.TrimSpace(req.SRPSalt)
-	req.SRPVerifier = strings.TrimSpace(req.SRPVerifier)
-
-	if req.SRPSalt == "" || req.SRPVerifier == "" {
-		http.Error(w, `{"error":"srpSalt and srpVerifier are required"}`, http.StatusBadRequest)
-		return
-	}
-
-	userID := middleware.GetUserIDFromContext(r.Context())
-
-	var username string
-	checkQuery := `SELECT username FROM users WHERE id = $1`
-	err := h.DB.Pool.QueryRow(r.Context(), checkQuery, userID).Scan(&username)
-	if err == pgx.ErrNoRows {
-		http.Error(w, `{"error":"User not found"}`, http.StatusNotFound)
-		return
-	} else if err != nil {
-		log.Printf("Error retrieving user %s: %v", userID, err)
-		http.Error(w, `{"error":"Internal server error"}`, http.StatusInternalServerError)
-		return
-	}
-
-	updateQuery := `
-		UPDATE users 
-		SET srp_salt = $1, srp_verifier = $2
-		WHERE id = $3`
-
-	_, err = h.DB.Pool.Exec(r.Context(), updateQuery, req.SRPSalt, req.SRPVerifier, userID)
-	if err != nil {
-		log.Printf("Error updating SRP credentials for user %s: %v", username, err)
-		http.Error(w, `{"error":"Error updating password credentials"}`, http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]string{
-		"message": "Password credentials updated successfully.",
 	})
 }
