@@ -19,7 +19,6 @@ import (
 type AuthHandler struct {
 	DB     *db.DB
 	Cfg    *config.Config
-	LDAP   *auth.LDAPAuthenticator
 	Bridge *bridge.MemoryBridge
 }
 
@@ -28,7 +27,6 @@ func NewAuthHandler(database *db.DB, cfg *config.Config, bridge *bridge.MemoryBr
 	return &AuthHandler{
 		DB:     database,
 		Cfg:    cfg,
-		LDAP:   auth.NewLDAPAuthenticator(cfg),
 		Bridge: bridge,
 	}
 }
@@ -149,16 +147,6 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	var user models.User
 	query := `SELECT id, username, token_version, created_at FROM users WHERE username = $1`
 	err := h.DB.Pool.QueryRow(r.Context(), query, username).Scan(&user.ID, &user.Username, &user.TokenVersion, &user.CreatedAt)
-
-	if err == pgx.ErrNoRows {
-		wkdHash := wks.HashLocalPart(username)
-		// Auto-provisioning: valid user is added to the local DB
-		insertQuery := `
-			INSERT INTO users (username, wkd_hash) 
-			VALUES ($1, $2) 
-			RETURNING id, username, token_version, created_at`
-		err = h.DB.Pool.QueryRow(r.Context(), insertQuery, username, wkdHash).Scan(&user.ID, &user.Username, &user.TokenVersion, &user.CreatedAt)
-	}
 
 	if err != nil {
 		log.Printf("Error when synchronizing user %s: %v", username, err)
