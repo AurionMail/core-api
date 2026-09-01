@@ -25,6 +25,10 @@ jobs:
         run: go mod tidy
 
       - name: Build application
+        env:
+          CGO_ENABLED: '0'
+          GOOS: 'linux'
+          GOARCH: 'amd64'
         run: go build -ldflags="-w -s" -o aurion-api ./cmd/api
 
       - name: Create Zip Archive
