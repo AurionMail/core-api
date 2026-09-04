@@ -84,8 +84,6 @@ func (h *AuthHandler) SetOpaque(w http.ResponseWriter, r *http.Request) {
 func (h *AuthHandler) GetOpaque(w http.ResponseWriter, r *http.Request) {
 	var req getOpaqueRequest
 
-	// Support du format JSON Body
-
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, `{"error":"Invalid JSON format"}`, http.StatusBadRequest)
 		return

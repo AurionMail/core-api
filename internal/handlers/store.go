@@ -21,13 +21,13 @@ func NewBridgeHandler(b *bridge.MemoryBridge) *BridgeHandler {
 type PushSecretRequest struct {
 	EncryptedData string `json:"encryptedData"`
 	TTLSeconds    int    `json:"ttlSeconds,omitempty"` // Default: 300s (5 min)
-	ID            string `json:"id,omitempty"`         // Optional custom ID (used by internal route)
+	ID            string `json:"id,omitempty"`
 }
 
 type InternalPushSecretRequest struct {
 	EncryptedData string `json:"encryptedData"`
 	TTLSeconds    int    `json:"ttlSeconds,omitempty"` // Default: 300s (5 min)
-	ID            string `json:"id,omitempty"`         // Optional custom ID (used by internal route)
+	ID            string `json:"id,omitempty"`
 	Token         string `json:"loginToken,omitempty"`
 	Username      string `json:"username,omitempty"`
 }
@@ -37,7 +37,6 @@ type PushSecretResponse struct {
 	ExpiresAt time.Time `json:"expiresAt"`
 }
 
-// Fonction interne partagée pour gérer la logique d'enregistrement
 func (h *BridgeHandler) handlePushSecret(w http.ResponseWriter, r *http.Request) {
 	var req PushSecretRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.EncryptedData) == "" {
@@ -73,7 +72,7 @@ func (h *BridgeHandler) handleInternalPushSecret(w http.ResponseWriter, r *http.
 		return
 	}
 
-	// Validation du TTL (Default: 5 min, Max: 1h)
+	// validate TTL
 	ttl := 5 * time.Minute
 	if req.TTLSeconds > 0 && req.TTLSeconds <= 3600 {
 		ttl = time.Duration(req.TTLSeconds) * time.Second

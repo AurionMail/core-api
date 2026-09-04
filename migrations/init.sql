@@ -3,7 +3,7 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
 CREATE TABLE IF NOT EXISTS users (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    username VARCHAR(255) UNIQUE NOT NULL, --TODO migrate email from username
+    username VARCHAR(255) UNIQUE NOT NULL,
     wkd_hash VARCHAR(32) UNIQUE,
     token_version INT NOT NULL DEFAULT 1,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),

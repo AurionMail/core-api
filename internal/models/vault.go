@@ -11,16 +11,15 @@ type VaultBackup struct {
 }
 
 type Argon2Params struct {
-	MemoryCost  uint32 `json:"memoryCost,omitempty"`  // ex: 65536
-	TimeCost    uint32 `json:"timeCost,omitempty"`    // ex: 3
-	Parallelism uint8  `json:"parallelism,omitempty"` // ex: 4
+	MemoryCost  uint32 `json:"memoryCost,omitempty"`
+	TimeCost    uint32 `json:"timeCost,omitempty"`
+	Parallelism uint8  `json:"parallelism,omitempty"`
 }
 
-// WebAuthnData stocke les métadonnées de chiffrement liées à un passkey / WebAuthn
 type WebAuthnData struct {
-	CredentialId        string `json:"credentialId"`        // Stocké en Base64 dans le JSON/DB
-	EncryptedPassphrase string `json:"encryptedPassphrase"` // Stocké en Base64 dans le JSON/DB
-	IV                  string `json:"iv"`                  // Stocké en Base64 dans le JSON/DB
+	CredentialId        string `json:"credentialId"`
+	EncryptedPassphrase string `json:"encryptedPassphrase"`
+	IV                  string `json:"iv"`
 }
 
 type PGPKey struct {

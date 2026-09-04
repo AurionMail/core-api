@@ -8,10 +8,9 @@ import (
 	"time"
 )
 
-// SecretBlob represents the encrypted secret container in RAM
 type SecretBlob struct {
 	ID            string    `json:"id"`
-	EncryptedData string    `json:"encryptedData"` // The client-side encrypted payload
+	EncryptedData string    `json:"encryptedData"`
 	ExpiresAt     time.Time `json:"expiresAt"`
 	timer         *time.Timer
 }
@@ -81,7 +80,6 @@ func (b *MemoryBridge) Consume(id string) (*SecretBlob, bool) {
 
 	blob, ok := value.(*SecretBlob)
 	if !ok {
-		// Target element wasn't a SecretBlob (e.g. LoginTokenBlob)
 		return nil, false
 	}
 
@@ -96,10 +94,6 @@ func (b *MemoryBridge) Consume(id string) (*SecretBlob, bool) {
 
 	return blob, true
 }
-
-// ============================================================================
-// Login Token Methods
-// ============================================================================
 
 // StoreLoginToken places an unencrypted username/token payload in RAM with a TTL
 func (b *MemoryBridge) StoreLoginToken(username, token string, ttl time.Duration) (*LoginTokenBlob, error) {
