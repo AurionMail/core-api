@@ -61,6 +61,7 @@ func main() {
 	authHandler := handlers.NewAuthHandler(database, cfg, memBridge)
 	vaultHandler := handlers.NewVaultHandler(database)
 	wksHandler := handlers.NewWKSHandler(database)
+	treeHandler := handlers.NewTreeHandler(database)
 
 	r.Get("/.well-known/openpgpkey/hu/{hash}", wksHandler.GetPublicKey)
 	r.Get("/.well-known/openpgpkey/{domain}/hu/{hash}", wksHandler.GetPublicKey)
@@ -91,6 +92,9 @@ func main() {
 		r.Get("/api/auth/logout", authHandler.LogoutAll)
 		r.Get("/api/vault", vaultHandler.GetVault)
 		r.Post("/api/vault", vaultHandler.SyncVault)
+		r.Get("/api/vault/tree", treeHandler.GetTree)
+		r.Post("/api/vault/tree", treeHandler.SaveTree)
+		r.Delete("/api/vault/tree", treeHandler.DeleteTree)
 		r.Delete("/api/vault/cache", vaultHandler.ClearMessageCache)
 		r.Delete("/api/vault/cache/messages", vaultHandler.DeleteCachedMessages)
 		r.Post("/api/bridge/secret", bridgeHandler.PushSecret)

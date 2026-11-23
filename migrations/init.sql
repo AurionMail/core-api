@@ -41,4 +41,11 @@ CREATE TABLE IF NOT EXISTS user_plugins_data (
     PRIMARY KEY (user_id, plugin_id)
 );
 
+CREATE TABLE IF NOT EXISTS user_tree (
+    user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    encrypted_payload TEXT NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);
+
 CREATE INDEX IF NOT EXISTS idx_message_cache_user_id ON user_message_cache(user_id);
