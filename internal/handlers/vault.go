@@ -31,6 +31,7 @@ func (h *VaultHandler) GetVault(w http.ResponseWriter, r *http.Request) {
 	backup := models.VaultBackup{
 		MessageCache: []models.CachedMessage{},
 		Keys:         []models.PGPKey{},
+		PluginsData:  []models.PluginsData{},
 	}
 
 	var keysJSON []byte
@@ -69,16 +70,59 @@ func (h *VaultHandler) GetVault(w http.ResponseWriter, r *http.Request) {
         FROM user_message_cache 
         WHERE user_id = $1`
 
-	rows, err := h.DB.Pool.Query(r.Context(), queryCache, userID)
-	if err == nil {
-		defer rows.Close()
-		for rows.Next() {
-			var msg models.CachedMessage
-			if err := rows.Scan(&msg.ID, &msg.EncryptedPayload, &msg.IV); err == nil {
-				backup.MessageCache = append(backup.MessageCache, msg)
-			}
-		}
+	cacheRows, err := h.DB.Pool.Query(r.Context(), queryCache, userID)
+	if err != nil {
+		http.Error(w, `{"error":"Error reading message cache"}`, http.StatusInternalServerError)
+		return
 	}
+	for cacheRows.Next() {
+		var msg models.CachedMessage
+		if err := cacheRows.Scan(&msg.ID, &msg.EncryptedPayload, &msg.IV); err != nil {
+			cacheRows.Close()
+			http.Error(w, `{"error":"Error scanning message cache"}`, http.StatusInternalServerError)
+			return
+		}
+		backup.MessageCache = append(backup.MessageCache, msg)
+	}
+	if err := cacheRows.Err(); err != nil {
+		cacheRows.Close()
+		http.Error(w, `{"error":"Error iterating message cache"}`, http.StatusInternalServerError)
+		return
+	}
+	cacheRows.Close()
+
+	// 3. Retrieve plugins data
+	queryPluginsData := `
+        SELECT plugin_id, account_id, encrypted_payload
+        FROM user_plugins_data 
+        WHERE user_id = $1`
+
+	pluginRows, err := h.DB.Pool.Query(r.Context(), queryPluginsData, userID)
+	if err != nil {
+		http.Error(w, `{"error":"Error reading plugins data"}`, http.StatusInternalServerError)
+		return
+	}
+	for pluginRows.Next() {
+		var item models.PluginsData
+		var payload []byte
+		if err := pluginRows.Scan(&item.ID, &item.AccountID, &payload); err != nil {
+			pluginRows.Close()
+			http.Error(w, `{"error":"Error scanning plugins data"}`, http.StatusInternalServerError)
+			return
+		}
+		if len(payload) > 0 {
+			item.Data = json.RawMessage(payload)
+		} else {
+			item.Data = json.RawMessage(`{}`)
+		}
+		backup.PluginsData = append(backup.PluginsData, item)
+	}
+	if err := pluginRows.Err(); err != nil {
+		pluginRows.Close()
+		http.Error(w, `{"error":"Error iterating plugins data"}`, http.StatusInternalServerError)
+		return
+	}
+	pluginRows.Close()
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
@@ -148,7 +192,44 @@ func (h *VaultHandler) SyncVault(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		br.Close()
+		if err := br.Close(); err != nil {
+			http.Error(w, `{"error":"Error closing message cache batch"}`, http.StatusInternalServerError)
+			return
+		}
+	}
+
+	// 3. Batching for plugins data
+	if len(payload.PluginsData) > 0 {
+		batch := &pgx.Batch{}
+		queryPlugin := `
+            INSERT INTO user_plugins_data (user_id, plugin_id, account_id, encrypted_payload, updated_at)
+            VALUES ($1, $2, $3, $4, NOW())
+            ON CONFLICT (user_id, plugin_id) 
+            DO UPDATE SET account_id = EXCLUDED.account_id, encrypted_payload = EXCLUDED.encrypted_payload, updated_at = NOW()`
+
+		for _, item := range payload.PluginsData {
+			rawData := item.Data
+			if len(rawData) == 0 {
+				rawData = json.RawMessage(`{}`)
+			} else if !json.Valid(rawData) {
+				http.Error(w, `{"error":"Invalid JSON in plugin data"}`, http.StatusBadRequest)
+				return
+			}
+			batch.Queue(queryPlugin, userID, item.ID, item.AccountID, []byte(rawData))
+		}
+
+		br := tx.SendBatch(r.Context(), batch)
+		for range payload.PluginsData {
+			if _, err := br.Exec(); err != nil {
+				_ = br.Close()
+				http.Error(w, `{"error":"Error processing plugins data"}`, http.StatusInternalServerError)
+				return
+			}
+		}
+		if err := br.Close(); err != nil {
+			http.Error(w, `{"error":"Error closing plugins data batch"}`, http.StatusInternalServerError)
+			return
+		}
 	}
 
 	if err := tx.Commit(r.Context()); err != nil {

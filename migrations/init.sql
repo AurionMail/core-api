@@ -1,4 +1,3 @@
-
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
 CREATE TABLE IF NOT EXISTS users (
@@ -12,7 +11,7 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE INDEX IF NOT EXISTS idx_users_wkd_hash ON users(wkd_hash);
 
 ALTER TABLE users 
-    ADD COLUMN opaque_record TEXT;
+    ADD COLUMN IF NOT EXISTS opaque_record TEXT;
 
 CREATE TABLE IF NOT EXISTS user_vault (
     user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
@@ -31,6 +30,15 @@ CREATE TABLE IF NOT EXISTS user_message_cache (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     PRIMARY KEY (user_id, message_id)
+);
+
+CREATE TABLE IF NOT EXISTS user_plugins_data (
+    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    plugin_id VARCHAR(255) NOT NULL,
+    encrypted_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    PRIMARY KEY (user_id, plugin_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_message_cache_user_id ON user_message_cache(user_id);

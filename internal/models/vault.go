@@ -1,6 +1,9 @@
 package models
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 type VaultBackup struct {
 	Format       string          `json:"format"`
@@ -8,6 +11,7 @@ type VaultBackup struct {
 	CreatedAt    time.Time       `json:"createdAt"`
 	Keys         []PGPKey        `json:"keys"`
 	MessageCache []CachedMessage `json:"messageCache"`
+	PluginsData  []PluginsData   `json:"pluginsData"`
 }
 
 type Argon2Params struct {
@@ -59,4 +63,10 @@ type CachedMessage struct {
 	EncryptedPayload string `json:"encryptedPayload"`
 	KeyRecordID      string `json:"keyRecordId"`
 	IV               string `json:"iv"`
+}
+
+type PluginsData struct {
+	ID        string          `json:"id"`
+	Data      json.RawMessage `json:"data"`
+	AccountID *string         `json:"accountId,omitempty"`
 }
