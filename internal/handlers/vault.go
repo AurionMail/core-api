@@ -93,7 +93,7 @@ func (h *VaultHandler) GetVault(w http.ResponseWriter, r *http.Request) {
 
 	// 3. Retrieve plugins data
 	queryPluginsData := `
-        SELECT plugin_id, account_id, encrypted_payload
+        SELECT plugin_id, encrypted_payload
         FROM user_plugins_data 
         WHERE user_id = $1`
 
@@ -105,7 +105,7 @@ func (h *VaultHandler) GetVault(w http.ResponseWriter, r *http.Request) {
 	for pluginRows.Next() {
 		var item models.PluginsData
 		var payload []byte
-		if err := pluginRows.Scan(&item.ID, &item.AccountID, &payload); err != nil {
+		if err := pluginRows.Scan(&item.ID, &payload); err != nil {
 			pluginRows.Close()
 			http.Error(w, `{"error":"Error scanning plugins data"}`, http.StatusInternalServerError)
 			return
@@ -202,10 +202,10 @@ func (h *VaultHandler) SyncVault(w http.ResponseWriter, r *http.Request) {
 	if len(payload.PluginsData) > 0 {
 		batch := &pgx.Batch{}
 		queryPlugin := `
-            INSERT INTO user_plugins_data (user_id, plugin_id, account_id, encrypted_payload, updated_at)
-            VALUES ($1, $2, $3, $4, NOW())
+            INSERT INTO user_plugins_data (user_id, plugin_id, encrypted_payload, updated_at)
+            VALUES ($1, $2, $3, NOW())
             ON CONFLICT (user_id, plugin_id) 
-            DO UPDATE SET account_id = EXCLUDED.account_id, encrypted_payload = EXCLUDED.encrypted_payload, updated_at = NOW()`
+            DO UPDATE SET user_id = EXCLUDED.user_id, encrypted_payload = EXCLUDED.encrypted_payload, updated_at = NOW()`
 
 		for _, item := range payload.PluginsData {
 			rawData := item.Data
@@ -215,7 +215,7 @@ func (h *VaultHandler) SyncVault(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, `{"error":"Invalid JSON in plugin data"}`, http.StatusBadRequest)
 				return
 			}
-			batch.Queue(queryPlugin, userID, item.ID, item.AccountID, []byte(rawData))
+			batch.Queue(queryPlugin, userID, item.ID, []byte(rawData))
 		}
 
 		br := tx.SendBatch(r.Context(), batch)

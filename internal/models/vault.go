@@ -66,7 +66,6 @@ type CachedMessage struct {
 }
 
 type PluginsData struct {
-	ID        string          `json:"id"`
-	Data      json.RawMessage `json:"data"`
-	AccountID *string         `json:"accountId,omitempty"`
+	ID   string          `json:"id"`
+	Data json.RawMessage `json:"data"`
 }
